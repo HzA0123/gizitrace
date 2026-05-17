@@ -1,14 +1,18 @@
 from pydantic import BaseModel
-from typing import Optional, List
 
 class FeedbackSubmit(BaseModel):
     school_id: str
     class_id: str
-    delivery_id: str
-    response: str # e.g., 'full', 'half', 'reject'
+    response_full: int
+    response_half: int
+    response_reject: int
 
 class DeliveryCreate(BaseModel):
     vendor_id: str
     school_id: str
-    menu_description: str
     reported_portions: int
+    menu_description: str
+
+class DeliveryConfirm(BaseModel):
+    delivery_id: str
+    confirmed_by: str
