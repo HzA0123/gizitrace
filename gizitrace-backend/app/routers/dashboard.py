@@ -76,54 +76,86 @@ async def get_school_dashboard(school_id: str):
 @router.get("/gov")
 async def get_gov_dashboard():
     today = date.today().isoformat()
+    seven_days_ago = (date.today() - timedelta(days=7)).isoformat()
     
-    # 1. Ambil semua sekolah dari table schools
-    schools_result = supabase.table("schools").select("*").execute()
+    # 1. Ambil semua sekolah dari table schools (termasuk total_students)
+    schools_result = supabase.table("schools")\
+        .select("id, name, district, city, total_students")\
+        .execute()
     schools = schools_result.data
     
-    # 2. Untuk setiap sekolah ambil feedback hari ini dan hitung acceptance_rate
-    feedback_result = supabase.table("feedback").select("*").eq("date", today).execute()
+    # 2. Ambil feedback hari ini (untuk total_responses per sekolah di tampilan tabel)
+    feedback_today_result = supabase.table("feedback").select("*").eq("date", today).execute()
     
-    school_stats = {}
-    for fb in feedback_result.data:
+    school_today_stats = {}
+    for fb in feedback_today_result.data:
         sid = fb["school_id"]
-        if sid not in school_stats:
-            school_stats[sid] = {"full": 0, "half": 0, "reject": 0, "total": 0}
+        if sid not in school_today_stats:
+            school_today_stats[sid] = {"full": 0, "half": 0, "reject": 0, "total": 0}
         
         full = fb.get("response_full", 0)
         half = fb.get("response_half", 0)
         reject = fb.get("response_reject", 0)
         
-        school_stats[sid]["full"] += full
-        school_stats[sid]["half"] += half
-        school_stats[sid]["reject"] += reject
-        school_stats[sid]["total"] += (full + half + reject)
+        school_today_stats[sid]["full"] += full
+        school_today_stats[sid]["half"] += half
+        school_today_stats[sid]["reject"] += reject
+        school_today_stats[sid]["total"] += (full + half + reject)
+    
+    # 3. Ambil feedback 7 hari terakhir untuk kalkulasi acceptance_rate per sekolah
+    feedback_7d_result = supabase.table("feedback")\
+        .select("school_id, response_full, total_responses")\
+        .gte("date", seven_days_ago)\
+        .execute()
+    
+    school_7d_stats = {}
+    for fb in feedback_7d_result.data:
+        sid = fb["school_id"]
+        if sid not in school_7d_stats:
+            school_7d_stats[sid] = {"full": 0, "total": 0}
+        school_7d_stats[sid]["full"] += fb.get("response_full", 0)
+        school_7d_stats[sid]["total"] += fb.get("total_responses", 0)
         
     schools_data = []
-    total_agg = {"full": 0, "half": 0, "reject": 0, "total": 0}
     
     for s in schools:
         sid = s["id"]
-        stats = school_stats.get(sid, {"full": 0, "half": 0, "reject": 0, "total": 0})
-        acc_rate = (stats["full"] / stats["total"] * 100) if stats["total"] > 0 else 0
+        today_stats = school_today_stats.get(sid, {"full": 0, "half": 0, "reject": 0, "total": 0})
+        stats_7d = school_7d_stats.get(sid, {"full": 0, "total": 0})
+        
+        # acceptance_rate per sekolah = rata-rata 7 hari (0-1 fraction)
+        acc_rate = round(stats_7d["full"] / stats_7d["total"], 3) if stats_7d["total"] > 0 else 0
         
         schools_data.append({
             "school_id": sid,
             "name": s.get("name"),
             "district": s.get("district"),
             "city": s.get("city"),
-            "total_responses": stats["total"],
+            "total_students": s.get("total_students"),
+            "total_responses": today_stats["total"],
             "acceptance_rate": acc_rate
         })
-        
-        total_agg["full"] += stats["full"]
-        total_agg["half"] += stats["half"]
-        total_agg["reject"] += stats["reject"]
-        total_agg["total"] += stats["total"]
-        
-    total_acc_rate = (total_agg["full"] / total_agg["total"] * 100) if total_agg["total"] > 0 else 0
     
-    # 3. Ambil semua anomalies WHERE is_resolved = false
+    # 4. Kalkulasi aggregate_total acceptance_rate dari 7 hari terakhir (semua sekolah)
+    feedback_agg_result = supabase.table("feedback")\
+        .select("response_full, total_responses")\
+        .gte("date", seven_days_ago)\
+        .execute()
+    
+    if feedback_agg_result.data:
+        total_full = sum(f.get("response_full", 0) for f in feedback_agg_result.data)
+        total_resp = sum(f.get("total_responses", 0) for f in feedback_agg_result.data)
+        acceptance_rate = round(total_full / total_resp, 3) if total_resp > 0 else 0
+    else:
+        acceptance_rate = 0
+    
+    # Hitung total_responses hari ini untuk aggregate_total
+    total_today_full = sum(s["full"] for s in school_today_stats.values())
+    total_today_half = sum(s["half"] for s in school_today_stats.values())
+    total_today_reject = sum(s["reject"] for s in school_today_stats.values())
+    total_today_responses = sum(s["total"] for s in school_today_stats.values())
+    
+    # 5. Ambil semua anomalies WHERE is_resolved = false
     anomalies_result = supabase.table("anomalies").select("*, schools(name)").eq("is_resolved", False).execute()
     anomalies = anomalies_result.data
     
@@ -131,10 +163,10 @@ async def get_gov_dashboard():
         "schools": schools_data,
         "anomalies_active": anomalies,
         "aggregate_total": {
-            "total_responses": total_agg["total"],
-            "response_full": total_agg["full"],
-            "response_half": total_agg["half"],
-            "response_reject": total_agg["reject"],
-            "acceptance_rate": total_acc_rate
+            "total_responses": total_today_responses,
+            "response_full": total_today_full,
+            "response_half": total_today_half,
+            "response_reject": total_today_reject,
+            "acceptance_rate": acceptance_rate  # rata-rata 7 hari terakhir (0-1 fraction)
         }
     }
