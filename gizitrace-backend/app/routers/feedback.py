@@ -9,30 +9,66 @@ router = APIRouter()
 async def submit_feedback(data: FeedbackSubmit):
     today = date.today().isoformat()
 
-    # Cek apakah ada delivery hari ini untuk sekolah ini
+    # Cek delivery hari ini
     delivery = supabase.table("deliveries") \
         .select("id") \
         .eq("school_id", data.school_id) \
         .eq("date", today) \
+        .single() \
         .execute()
-        
-    # .single() will throw if not exactly 1 row, using list check
-    if not delivery.data or len(delivery.data) == 0:
-        raise HTTPException(status_code=404, detail="Tidak ada delivery terdaftar hari ini untuk sekolah ini")
 
-    # Insert feedback
-    result = supabase.table("feedback").insert({
-        "school_id": data.school_id,
-        "class_id": data.class_id,
-        "delivery_id": delivery.data[0]["id"],
-        "date": today,
-        "response_full": data.response_full,
-        "response_half": data.response_half,
-        "response_reject": data.response_reject,
-        "total_responses": data.response_full + data.response_half + data.response_reject
-    }).execute()
+    if not delivery.data:
+        raise HTTPException(
+            status_code=404, 
+            detail="Tidak ada delivery terdaftar hari ini"
+        )
 
-    return {"message": "Feedback berhasil disimpan", "data": result.data}
+    # Cek apakah feedback untuk kelas ini hari ini sudah ada
+    existing = supabase.table("feedback") \
+        .select("id, response_full, response_half, response_reject, total_responses") \
+        .eq("school_id", data.school_id) \
+        .eq("class_id", data.class_id) \
+        .eq("date", today) \
+        .execute()
+
+    if existing.data:
+        # Sudah ada → UPDATE, tambahkan ke count
+        current = existing.data[0]
+        new_full    = current["response_full"]    + data.response_full
+        new_half    = current["response_half"]    + data.response_half
+        new_reject  = current["response_reject"]  + data.response_reject
+        new_total   = current["total_responses"]  + 1
+
+        result = supabase.table("feedback").update({
+            "response_full":    new_full,
+            "response_half":    new_half,
+            "response_reject":  new_reject,
+            "total_responses":  new_total
+        }).eq("id", current["id"]).execute()
+
+        return {
+            "message": "Feedback berhasil ditambahkan",
+            "action": "updated",
+            "total_responses": new_total
+        }
+    else:
+        # Belum ada → INSERT baru
+        result = supabase.table("feedback").insert({
+            "school_id":       data.school_id,
+            "class_id":        data.class_id,
+            "delivery_id":     delivery.data["id"],
+            "date":            today,
+            "response_full":   data.response_full,
+            "response_half":   data.response_half,
+            "response_reject": data.response_reject,
+            "total_responses": 1
+        }).execute()
+
+        return {
+            "message": "Feedback berhasil disimpan",
+            "action": "inserted",
+            "total_responses": 1
+        }
 
 @router.get("/today/{school_id}")
 async def get_today_feedback(school_id: str):

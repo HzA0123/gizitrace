@@ -1,5 +1,6 @@
-from fastapi import APIRouter, UploadFile, File, Form
+from fastapi import APIRouter, UploadFile, File, Form, HTTPException
 from app.config import supabase
+from app.services.recommendation import get_menu_recommendations
 
 router = APIRouter()
 
@@ -14,5 +15,12 @@ async def analyze_photo(
 
 @router.get("/recommend-menu")
 async def recommend_menu(school_id: str):
-    # Dummy implementation integrating with Recommendation service
-    return {"message": "Menu recommended", "recommendation": "Nasi Goreng"}
+    try:
+        recommendations = get_menu_recommendations(school_id)
+        return {
+            "school_id": school_id,
+            "recommendations": recommendations,
+            "total": len(recommendations)
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
