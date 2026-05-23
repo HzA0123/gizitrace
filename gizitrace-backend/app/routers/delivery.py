@@ -52,3 +52,23 @@ async def confirm_delivery(data: DeliveryConfirm):
     }).eq("id", data.delivery_id).execute()
 
     return {"message": "Delivery berhasil dikonfirmasi", "data": result.data}
+
+@router.get("/{school_id}")
+async def get_today_delivery(school_id: str):
+    today = date.today().isoformat()
+
+    result = supabase.table("deliveries") \
+        .select("*") \
+        .eq("school_id", school_id) \
+        .eq("date", today) \
+        .execute()
+
+    if not result.data:
+        return {"delivery": None}
+
+    # Urutkan: ambil yang belum confirmed dulu
+    unconfirmed = [d for d in result.data if not d.get("delivery_confirmed")]
+    if unconfirmed:
+        return {"delivery": unconfirmed[0]}
+    
+    return {"delivery": result.data[0]}

@@ -11,7 +11,13 @@ async def analyze_photo(
     file: UploadFile = File(...)
 ):
     # Dummy implementation integrating with OpenCV service later
-    return {"message": "Photo analyzed", "waste_percent": 15.5, "filename": file.filename}
+    return {
+        "message": "Photo analyzed",
+        "waste_percent": 15.5,
+        "confidence": 85.0,
+        "filename": file.filename
+    }
+
 
 @router.get("/recommend-menu")
 async def recommend_menu(school_id: str):
